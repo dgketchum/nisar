@@ -2,7 +2,7 @@
 needed to interpret it (quality flags, backscatter, incidence angle, land cover).
 
 Usage:
-    uv run python scripts/eda_sme2_scene.py <path_to_h5> outputs/
+    uv run python scripts/eda_sme2_scene.py <path_to_h5> /data/ssd2/nisar/
 """
 
 import sys
@@ -159,20 +159,31 @@ def make_figures(data: dict, meta: dict, out_dir: Path) -> None:
     plt.close(fig)
 
 
-def write_geotiffs(data: dict, meta: dict, out_dir: Path) -> None:
-    """Write QGIS-renderable GeoTIFFs on the native EASE-Grid 2.0 (EPSG:6933) grid."""
-    out_dir = out_dir / "tif"
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _grid_transform(data: dict):
     dx = float(data["dx"])
     dy = float(data["dy"])
     west = float(data["x"][0]) - dx / 2
     north = float(data["y"][0]) - dy / 2
-    transform = from_origin(west, north, dx, abs(dy))
+    return from_origin(west, north, dx, abs(dy))
 
+
+def _recommended_sm(data: dict) -> np.ndarray:
     sm = data["soil_moisture"]
     qf = data["retrieval_qf"]
     recommended = (sm != SM_FILL) & ((qf & 1) == 0)
-    sm_masked = np.where(recommended, sm, np.nan).astype("float32")
+    return np.where(recommended, sm, np.nan).astype("float32")
+
+
+def write_soil_moisture_geotiff(
+    data: dict, meta: dict, out_dir: Path, stem: str | None = None
+) -> Path:
+    """Write just the recommended-retrieval soilMoisture band as a GeoTIFF."""
+    out_dir = out_dir / "tif"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = stem or "sme2"
+    transform = _grid_transform(data)
+    sm = data["soil_moisture"]
+    sm_masked = _recommended_sm(data)
 
     profile = {
         "driver": "GTiff",
@@ -185,9 +196,34 @@ def write_geotiffs(data: dict, meta: dict, out_dir: Path) -> None:
         "nodata": np.nan,
         "compress": "deflate",
     }
-    with rasterio.open(out_dir / "sme2_soil_moisture.tif", "w", **profile) as dst:
+    out_path = out_dir / f"{stem}_soil_moisture.tif"
+    with rasterio.open(out_path, "w", **profile) as dst:
         dst.write(sm_masked, 1)
         dst.set_band_description(1, "soilMoisture_recommended_m3m3")
+    return out_path
+
+
+def write_geotiffs(
+    data: dict, meta: dict, out_dir: Path, stem: str | None = None
+) -> None:
+    """Write QGIS-renderable GeoTIFFs on the native EASE-Grid 2.0 (EPSG:6933) grid."""
+    write_soil_moisture_geotiff(data, meta, out_dir, stem)
+    out_dir = out_dir / "tif"
+    stem = stem or "sme2"
+    transform = _grid_transform(data)
+    sm_masked = _recommended_sm(data)
+
+    profile = {
+        "driver": "GTiff",
+        "height": sm_masked.shape[0],
+        "width": sm_masked.shape[1],
+        "count": 1,
+        "dtype": "float32",
+        "crs": f"EPSG:{EASE2_EPSG}",
+        "transform": transform,
+        "nodata": np.nan,
+        "compress": "deflate",
+    }
 
     sigma0_db = np.where(
         data["sigma0_hh_a"] > 0, 10 * np.log10(data["sigma0_hh_a"]), np.nan
@@ -197,7 +233,9 @@ def write_geotiffs(data: dict, meta: dict, out_dir: Path) -> None:
     )
     stack = np.stack([sm_masked, sigma0_db, ia, data["land_cover"].astype("float32")])
     stack_profile = dict(profile, count=stack.shape[0])
-    with rasterio.open(out_dir / "sme2_scene_stack.tif", "w", **stack_profile) as dst:
+    with rasterio.open(
+        out_dir / f"{stem}_scene_stack.tif", "w", **stack_profile
+    ) as dst:
         dst.write(stack)
         for i, name in enumerate(
             [
