@@ -610,7 +610,7 @@ def _remove_legendlayers_matching(qgs: str) -> str:
             name = name_m.group(1) if name_m else ""
             is_footprint = name == FOOTPRINT_NAME
             is_undated = name == UNDATED_STEM
-            is_sme2 = bool(re.fullmatch(r"sme2_\d{8}_soil_moisture", name))
+            is_sme2 = bool(re.fullmatch(r"sme2_(\w+_)?\d{8}_soil_moisture", name))
             if is_footprint or is_undated or is_sme2:
                 nl = out.find("\n", end)
                 if nl != -1 and out[end:nl].strip() == "":

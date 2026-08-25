@@ -12,6 +12,7 @@ from pathlib import Path
 
 import earthaccess
 from eda_sme2_scene import load_scene, write_geotiffs
+from track_frame_sm_stream import granule_stem
 
 SHORT_NAME = "NISAR_L3_SME2_PROVISIONAL_V1"
 
@@ -37,7 +38,7 @@ def process(track: int, frame: int, pass_direction: str, out_dir: Path) -> None:
             local = earthaccess.download([granule], tmp)[0]
             data, meta = load_scene(local)
             date_str = meta["start_time"][:10].replace("-", "")
-            stem = f"sme2_{date_str}"
+            stem = granule_stem(track, frame, pass_direction, date_str)
             write_geotiffs(data, meta, out_dir, stem=stem)
             print(f"  wrote {stem}_soil_moisture.tif, {stem}_scene_stack.tif")
 
