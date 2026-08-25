@@ -5,13 +5,17 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "earthaccess>=0.18.0",
+    "earthengine-api>=1.7.41",
     "fiona>=1.10.1",
     "geopandas>=1.1.4",
     "h5py>=3.16.0",
     "matplotlib>=3.11.1",
     "numpy>=2.5.2",
+    "pandas>=3.0.5",
+    "pyarrow>=25.0.1",
     "pyproj>=3.7.2",
     "rasterio>=1.5.1",
+    "requests>=2.34.2",
 ]
 
 [dependency-groups]
