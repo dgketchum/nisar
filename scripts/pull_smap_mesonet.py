@@ -23,55 +23,27 @@ from pathlib import Path
 import earthaccess
 import h5py
 import pandas as pd
-from pyproj import Transformer
+
+# Grid constants and station indexing live in ease2_grid.py (shared with the EE
+# pixel land-cover sampler and the grid fgb builder); re-exported here for callers.
+from ease2_grid import (  # noqa: F401 - re-exports
+    GRID_NCOLS,
+    GRID_NROWS,
+    GRID_X_MIN,
+    GRID_Y_MAX,
+    PIXEL_SIZE,
+    bounding_window,
+    station_grid_cells,
+)
 
 SHORT_NAME = "SPL3SMP_E"
 GROUP = "Soil_Moisture_Retrieval_Data_AM"
-EASE2_EPSG = 6933
-PIXEL_SIZE = 9008.055210
-# Fixed EASE2_G9km global grid definition (NSIDC), as verified in pull_smap_ancillary.py.
-GRID_X_MIN = -17367530.45
-GRID_Y_MAX = 7314540.83
-GRID_NCOLS = 3856
-GRID_NROWS = 1624
 
 FILL = -9999.0
-WINDOW_PAD = 2
 DEFAULT_START = "2025-01-01"
 PROGRESS_EVERY = 25
 FLUSH_EVERY = 25
 MAX_CONSECUTIVE_FAILURES = 20
-
-
-def station_grid_cells(stations_csv: Path) -> pd.DataFrame:
-    """Station -> (row, col) in the fixed EASE2_G9km global grid."""
-    stations = pd.read_csv(stations_csv)[["station", "longitude", "latitude"]]
-    transformer = Transformer.from_crs(
-        "EPSG:4326", f"EPSG:{EASE2_EPSG}", always_xy=True
-    )
-    x, y = transformer.transform(
-        stations["longitude"].to_numpy(), stations["latitude"].to_numpy()
-    )
-    stations["col"] = ((x - GRID_X_MIN) / PIXEL_SIZE).astype(int)
-    stations["row"] = ((GRID_Y_MAX - y) / PIXEL_SIZE).astype(int)
-    bad = (
-        (stations["col"] < 0)
-        | (stations["col"] >= GRID_NCOLS)
-        | (stations["row"] < 0)
-        | (stations["row"] >= GRID_NROWS)
-    )
-    if bad.any():
-        raise ValueError(f"{bad.sum()} stations fall outside the EASE2_G9km grid")
-    return stations
-
-
-def bounding_window(cells: pd.DataFrame, pad: int = WINDOW_PAD) -> tuple[slice, slice]:
-    """One row/col window covering every station, with a small pad."""
-    row_lo = max(int(cells["row"].min()) - pad, 0)
-    row_hi = min(int(cells["row"].max()) + pad + 1, GRID_NROWS)
-    col_lo = max(int(cells["col"].min()) - pad, 0)
-    col_hi = min(int(cells["col"].max()) + pad + 1, GRID_NCOLS)
-    return slice(row_lo, row_hi), slice(col_lo, col_hi)
 
 
 def granule_date(granule) -> str:
