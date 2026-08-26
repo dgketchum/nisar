@@ -16,7 +16,9 @@ coordinate defect):
 * ``cult_contrast`` -- |cultivated fraction at 100 m minus over the cell|, the
   probe-vs-pixel disagreement specifically
 
-Also written, because the same join answers them (plan work items 2-3):
+Also written, because the same land-cover sample answers them (plan work items 2-3), and
+over *every* sampled station rather than the head-to-head subset -- both are properties of
+the station and its pixel alone, and a site with no NISAR overpass yet is still a site:
 
 * the panel-1 representativeness classification -- a station is ``representative`` when
   its local dominant CDL group matches the cell's and the cultivated contrast is small,
@@ -62,26 +64,35 @@ def dominant_group(df: pd.DataFrame, suffix: str) -> pd.Series:
     return df[cols].idxmax(axis=1).str.removeprefix("f_").str.removesuffix(f"_{suffix}")
 
 
-def load(data_dir: Path) -> pd.DataFrame:
-    cmp = pd.read_csv(data_dir / "validation/sme2_vs_smap_comparison.csv")
+def load_landcover(data_dir: Path) -> pd.DataFrame:
+    """Every sampled station with its heterogeneity and representativeness columns.
+
+    Representativeness is a property of the station and its pixel's land cover alone, so
+    it is derived here over the full sample rather than over the head-to-head subset.
+    """
     pix = pd.read_csv(data_dir / "reference/smap_pixel_landcover.csv")
+
+    pix["mix_9km"] = 1.0 - pix[group_columns(pix, "9km")].max(axis=1)
+    pix["cult_contrast"] = (pix["cult_f_100"] - pix["cult_f_9km"]).abs()
+    pix["dom_group_100"] = dominant_group(pix, "100")
+    pix["dom_group_9km"] = dominant_group(pix, "9km")
+    pix["dom_group_match"] = pix["dom_group_100"] == pix["dom_group_9km"]
+    pix["representative"] = pix["dom_group_match"] & (
+        pix["cult_contrast"] <= CULT_CONTRAST_MAX
+    )
+    return pix
+
+
+def load_head_to_head(data_dir: Path, pix: pd.DataFrame) -> pd.DataFrame:
+    """The stations carrying both a NISAR and a SMAP skill record -- the stratified set."""
+    cmp = pd.read_csv(data_dir / "validation/sme2_vs_smap_comparison.csv")
     missing = sorted(set(cmp["station"]) - set(pix["station"]))
     if missing:
         raise ValueError(
             f"{len(missing)} head-to-head station(s) absent from the pixel land-cover "
             f"sample -- rerun sample_smap_pixel_landcover.py before stratifying: {missing}"
         )
-    df = cmp.merge(pix, on="station", how="left", validate="1:1")
-
-    df["mix_9km"] = 1.0 - df[group_columns(df, "9km")].max(axis=1)
-    df["cult_contrast"] = (df["cult_f_100"] - df["cult_f_9km"]).abs()
-    df["dom_group_100"] = dominant_group(df, "100")
-    df["dom_group_9km"] = dominant_group(df, "9km")
-    df["dom_group_match"] = df["dom_group_100"] == df["dom_group_9km"]
-    df["representative"] = df["dom_group_match"] & (
-        df["cult_contrast"] <= CULT_CONTRAST_MAX
-    )
-    return df
+    return cmp.merge(pix, on="station", how="left", validate="1:1")
 
 
 def correlation_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -168,7 +179,11 @@ def figure(df: pd.DataFrame, fig_path: Path) -> None:
 
 
 def shortlist(df: pd.DataFrame) -> pd.DataFrame:
-    """Panel-2 candidate cells: representative station in a mixed agricultural pixel."""
+    """Panel-2 candidate cells: representative station in a mixed agricultural pixel.
+
+    Runs over every sampled station, so ``r_smap``/``n_paired_smap`` are blank for a
+    candidate that carries no head-to-head record yet -- the cell is still a venue.
+    """
     lo, hi = SHORTLIST_CULT_RANGE
     ok = df[
         df["representative"]
@@ -191,7 +206,8 @@ def shortlist(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build(data_dir: Path) -> int:
-    df = load(data_dir)
+    pix = load_landcover(data_dir)
+    df = load_head_to_head(data_dir, pix)
 
     corr = correlation_table(df)
     terc = tercile_table(df)
@@ -218,15 +234,21 @@ def build(data_dir: Path) -> int:
         "mix_9km",
         "representative",
     ]
-    df[rep_cols].to_csv(rep_path, index=False)
-    short = shortlist(df)
+    pix[rep_cols].to_csv(rep_path, index=False)
+    smap_skill = df[["station", "r_smap", "n_paired_smap"]].astype(
+        {"n_paired_smap": "Int64"}
+    )
+    short = shortlist(pix.merge(smap_skill, on="station", how="left", validate="1:1"))
     short.to_csv(short_path, index=False)
     figure(df, data_dir / "figs/smap_sme2_heterogeneity.png")
 
     print(
         f"\nWrote {corr_path}\nWrote {terc_path}\nWrote {rep_path}\nWrote {short_path}"
     )
-    print(f"\nStations: {len(df)}; representative: {int(df['representative'].sum())}")
+    print(
+        f"\nStations sampled: {len(pix)}; representative: "
+        f"{int(pix['representative'].sum())}; head-to-head stratified: {len(df)}"
+    )
     print(f"Panel-2 candidate cells: {short['cell'].nunique()}")
     print("\nSpearman rho, d_r vs heterogeneity:")
     print(
