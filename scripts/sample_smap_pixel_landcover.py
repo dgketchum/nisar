@@ -171,12 +171,33 @@ def submit_exports(
 
 
 def _parse_histogram(raw, key_val, suffix: str) -> dict:
+    """Parse an EE-exported frequencyHistogram cell: '{176=30.4, 152=4.1}'.
+
+    Table exports serialize dictionary properties Java-style (key=value), not as
+    JSON. Values are area-weighted pixel counts and can be fractional.
+    """
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError(
             f"missing histogram for {key_val!r} ({suffix}) in exported CSV -- the "
             f"geometry missed the CDL domain; investigate before assembling"
         )
-    return json.loads(raw)
+    body = raw.strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        raise ValueError(
+            f"unexpected histogram format for {key_val!r} ({suffix}): {body[:80]!r}"
+        )
+    body = body[1:-1].strip()
+    if not body:
+        return {}
+    out = {}
+    for pair in body.split(","):
+        k, _, v = pair.partition("=")
+        if not _:
+            raise ValueError(
+                f"unexpected histogram entry for {key_val!r} ({suffix}): {pair!r}"
+            )
+        out[k.strip()] = float(v)
+    return out
 
 
 def assemble_exports(stations: pd.DataFrame, exports_dir: Path) -> pd.DataFrame:
