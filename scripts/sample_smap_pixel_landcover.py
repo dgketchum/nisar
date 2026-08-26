@@ -23,8 +23,7 @@ crop-class frequency histogram regrouped with the same GROUPS. Entropy over the 
 fractions is written alongside so downstream heterogeneity metrics have a ready-made
 scalar.
 
-Two-step design, so the EE work can run on a collaborator's quota (zh_commands.sh
-pattern, as in swim-mtdnrc):
+Two-step design, so the EE work can run on a collaborator's quota:
 
 * submit (default) -- submits five table-export tasks to GCS
   (gs://<bucket>/<fn-prefix>/<table>.csv) and exits; no local data dir needed. This is
@@ -33,8 +32,8 @@ pattern, as in swim-mtdnrc):
   (downloaded from the bucket) and assembles the finished per-station CSV locally.
 
 Usage:
-    python scripts/sample_smap_pixel_landcover.py --stations zh/mt_mesonet_smap_stations.csv \
-        --bucket wudr --project ee-hoylman
+    python scripts/sample_smap_pixel_landcover.py --stations mt_mesonet_smap_stations.csv \
+        --bucket <bucket> --project <ee-project>
     uv run python scripts/sample_smap_pixel_landcover.py /data/ssd2/nisar/ \
         --assemble /data/ssd2/nisar/ee_exports/smap_pixel_landcover
 """
@@ -106,7 +105,7 @@ def submit_exports(
 
     Each lands at gs://<bucket>/<fn_prefix>/<table>.csv; download the directory and
     finish with --assemble. Runs on whichever EE project is passed, so a collaborator
-    can execute this leg on their quota (see zh_commands.sh).
+    can execute this leg on their quota.
     """
     import ee
 

@@ -2,3 +2,7 @@ outputs/
 .venv/
 __pycache__/
 *.pyc
+
+# collaborator handoff files -- scp'd to the collaborator's machine, not tracked
+zh_commands.sh
+zh/
