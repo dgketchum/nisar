@@ -68,8 +68,15 @@ def extract_scene(tif_path: Path, stations: list, transformer: Transformer) -> l
     return records
 
 
-def extract_all(data_dir: Path) -> pd.DataFrame:
-    lookup = load_station_frame_lookup(data_dir)
+def extract_all(data_dir: Path, lookup: dict | None = None) -> pd.DataFrame:
+    """Point-sample every SME2 scene at whatever stations its track/frame/pass covers.
+
+    ``lookup`` defaults to the Montana Mesonet lookup; pass a different
+    ``{(track, frame, pass_code): [(station, lon, lat), ...]}`` mapping (e.g. from
+    ``validate_arm_bnf_sme2.load_station_frame_lookup``) to reuse this same extraction
+    against another network's stations without duplicating it.
+    """
+    lookup = lookup if lookup is not None else load_station_frame_lookup(data_dir)
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
 
     tif_paths = sorted((data_dir / "tif").glob("sme2_t*_soil_moisture.tif"))
