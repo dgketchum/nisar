@@ -11,9 +11,15 @@ within the cropped window.
 Output is stats-only: a tidy parquet of (station, date, smap_sm), no per-day GeoTIFFs.
 Re-running skips dates already present in the parquet.
 
+With --h5-dir, granules are read from a local archive (the swap-stress NAS mirror
+holds the full period of record at /nas/soils/smap/SPL3SMP_E/hdf5) instead of
+streamed -- same window logic, same recommended-quality screening, no network.
+
 Usage:
     uv run python scripts/pull_smap_mesonet.py /data/ssd2/nisar/
     uv run python scripts/pull_smap_mesonet.py /data/ssd2/nisar/ 2025-01-01 2026-08-25
+    uv run python scripts/pull_smap_mesonet.py /data/ssd2/nisar/ 2015-04-01 2026-08-26 \
+        --h5-dir /nas/soils/smap/SPL3SMP_E/hdf5
 """
 
 import sys
@@ -48,6 +54,8 @@ MAX_CONSECUTIVE_FAILURES = 20
 
 def granule_date(granule) -> str:
     """YYYYMMDD from the native id, e.g. SMAP_L3_SM_P_E_20250101_R19240_001.h5."""
+    if isinstance(granule, Path):
+        return granule.name.split("_")[5]
     return granule["meta"]["native-id"].split("_")[5]
 
 
@@ -67,10 +75,21 @@ def find_daily_granules(start: str, end: str) -> dict:
     return by_date
 
 
+def local_daily_granules(h5_dir: Path) -> dict:
+    """{YYYYMMDD: Path} from a local granule archive (e.g. the swap-stress NAS
+    mirror at /nas/soils/smap/SPL3SMP_E/hdf5) -- no earthaccess, no streaming.
+    Sorted so a reprocessed date resolves to the highest version, matching
+    find_daily_granules."""
+    paths = sorted(h5_dir.glob("SMAP_L3_SM_P_E_*.h5"))
+    if not paths:
+        raise FileNotFoundError(f"no SMAP_L3_SM_P_E_*.h5 granules under {h5_dir}")
+    return {granule_date(p): p for p in paths}
+
+
 def extract_day(granule, cells: pd.DataFrame, window: tuple[slice, slice]) -> list:
     """Read the cropped AM window once and pull each station's recommended-quality value."""
     row_sl, col_sl = window
-    fobj = earthaccess.open([granule])[0]
+    fobj = granule if isinstance(granule, Path) else earthaccess.open([granule])[0]
     with h5py.File(fobj, "r") as f:
         g = f[GROUP]
         sm = g["soil_moisture"][row_sl, col_sl]
@@ -115,8 +134,9 @@ def write_output(existing: pd.DataFrame, new_records: list, out_path: Path) -> i
     return len(combined)
 
 
-def run(data_dir: Path, start: str, end: str) -> None:
-    earthaccess.login(strategy="netrc")
+def run(data_dir: Path, start: str, end: str, h5_dir: Path | None = None) -> None:
+    if h5_dir is None:
+        earthaccess.login(strategy="netrc")
 
     cells = station_grid_cells(data_dir / "mesonet/mt_mesonet_stations.csv")
     window = bounding_window(cells)
@@ -133,8 +153,12 @@ def run(data_dir: Path, start: str, end: str) -> None:
     if done:
         print(f"Resuming: {len(done)} dates already in {out_path.name}")
 
-    by_date = find_daily_granules(start, end)
-    print(f"Found {len(by_date)} {SHORT_NAME} granules in {start}..{end}")
+    if h5_dir is not None:
+        by_date = local_daily_granules(h5_dir)
+        print(f"Found {len(by_date)} local {SHORT_NAME} granules under {h5_dir}")
+    else:
+        by_date = find_daily_granules(start, end)
+        print(f"Found {len(by_date)} {SHORT_NAME} granules in {start}..{end}")
 
     d0 = datetime.strptime(start, "%Y-%m-%d").date()  # noqa: DTZ007 - calendar date only, no tz
     d1 = datetime.strptime(end, "%Y-%m-%d").date()  # noqa: DTZ007 - calendar date only, no tz
@@ -190,7 +214,22 @@ def run(data_dir: Path, start: str, end: str) -> None:
 
 
 if __name__ == "__main__":
-    data_dir = Path(sys.argv[1])
-    start = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_START
-    end = sys.argv[3] if len(sys.argv) > 3 else date.today().strftime("%Y-%m-%d")  # noqa: DTZ011 - local calendar date
-    run(data_dir, start, end)
+    import argparse
+
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("data_dir", type=Path)
+    p.add_argument("start", nargs="?", default=DEFAULT_START)
+    p.add_argument(
+        "end",
+        nargs="?",
+        default=date.today().strftime("%Y-%m-%d"),  # noqa: DTZ011 - local calendar date
+    )
+    p.add_argument(
+        "--h5-dir",
+        type=Path,
+        default=None,
+        help="local granule archive (e.g. /nas/soils/smap/SPL3SMP_E/hdf5); "
+        "reads granules from disk instead of streaming via earthaccess",
+    )
+    a = p.parse_args(sys.argv[1:])
+    run(a.data_dir, a.start, a.end, h5_dir=a.h5_dir)
