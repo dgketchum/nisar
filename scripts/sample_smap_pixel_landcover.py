@@ -45,10 +45,17 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from ease2_grid import cell_rectangle, station_grid_cells
+from ease2_grid import EASE2_EPSG, cell_rectangle, station_grid_cells
+from pyproj import CRS
 from screen_station_siting import CDL, CROP_YEAR, EE_PROJECT, GROUPS, SCALE_M, _stack
 
-EASE2_CRS = "EPSG:6933"
+# Earth Engine cannot resolve the EPSG code for EASE-Grid 2.0 Global -- passing
+# "EPSG:6933" fails the export immediately with "The CRS of a map projection could not
+# be parsed". EE does accept the equivalent WKT1, so the definition is expanded here
+# rather than hardcoded, keeping ease2_grid.EASE2_EPSG the single source of truth for
+# the grid: the same code that projects station coordinates into (row, col) defines the
+# rectangle those cells are reduced over.
+EASE2_CRS = CRS.from_epsg(EASE2_EPSG).to_wkt("WKT1_GDAL")
 LOCAL_RADIUS_M = 100
 TILE_SCALE = 4
 
