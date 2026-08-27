@@ -42,22 +42,32 @@ import pandas as pd
 
 SWIMRS_EXAMPLES = Path("/home/dgketchum/code/swim-rs/examples")
 E5 = SWIMRS_EXAMPLES / "5_Flux_Ensemble"
-if str(E5) not in sys.path:
-    sys.path.insert(0, str(E5))
-
-import build_container as b5
-import container_prep as e2
-from swimrs.calibrate import PestBuilder
-from swimrs.container import open_container
-from swimrs.container.health import health_report_output_dir
-from swimrs.swim.config import ProjectConfig
 
 CONFIG = "/data/ssd2/nisar/swim/mt_mesonet/mt_mesonet.toml"
 EXCLUDE_SITES = ["blmcapit"]  # in-situ VWC corrupted by calibration drift
 ETF_START = "2015-01-01"
 
 
-def _load_config(conf: str = CONFIG, calibrate: bool = False) -> ProjectConfig:
+def _example5():
+    """Import Example 5's pipeline modules and wire this project's overrides in.
+
+    Deferred (not module-level) so the pure file-in/file-out helpers here stay
+    importable — and testable — without swimrs on the path.
+    """
+    if str(E5) not in sys.path:
+        sys.path.insert(0, str(E5))
+    import build_container as b5
+    import container_prep as e2
+
+    # Repoint config + neutralize the flux-cohort shapefile builder.
+    e2._load_config = _load_config
+    e2.build_shapefile = _guard_shapefile
+    return e2, b5
+
+
+def _load_config(conf: str = CONFIG, calibrate: bool = False):
+    from swimrs.swim.config import ProjectConfig
+
     cfg = ProjectConfig()
     cfg.read_config(conf, calibrate=calibrate)
     return cfg
@@ -70,12 +80,7 @@ def _guard_shapefile(cfg, overwrite=False, exclude_sites=None):
     print(f"Using prebuilt fields geometry: {cfg.fields_shapefile}")
 
 
-# Repoint config + neutralize the flux-cohort shapefile builder.
-e2._load_config = _load_config
-e2.build_shapefile = _guard_shapefile
-
-
-def select_sites(cfg: ProjectConfig, exclude: list[str]) -> list[str]:
+def select_sites(cfg, exclude: list[str]) -> list[str]:
     """Point ``cfg.fields_shapefile`` at a derived geometry with ``exclude`` dropped.
 
     The source geometry is left untouched; the subset is written to ``{gis}/build/``.
@@ -100,7 +105,7 @@ def select_sites(cfg: ProjectConfig, exclude: list[str]) -> list[str]:
     return keep[uid].tolist()
 
 
-def prepare_properties(cfg: ProjectConfig, sites: list[str]) -> dict[str, str]:
+def prepare_properties(cfg, sites: list[str]) -> dict[str, str]:
     """Subset the 231-station property CSVs to ``sites`` and drop empty LAT/LON.
 
     ``_ingest_irrigation``/``_ingest_lulc`` average every numeric column, so LAT/LON
@@ -135,8 +140,9 @@ def prepare_properties(cfg: ProjectConfig, sites: list[str]) -> dict[str, str]:
     return prepared
 
 
-def build(cfg: ProjectConfig, sites: list[str], overwrite: bool) -> str:
+def build(cfg, sites: list[str], overwrite: bool) -> str:
     """Create the container and run every ingest/compute stage in dependency order."""
+    e2, b5 = _example5()
     e2.build_gridmet_mapping(cfg, overwrite=False)
     container = e2.create_project_container(cfg, overwrite=overwrite)
     e2.ingest_meteorology(container, cfg, overwrite=overwrite)
@@ -189,8 +195,12 @@ def build(cfg: ProjectConfig, sites: list[str], overwrite: bool) -> str:
     return path
 
 
-def verify(cfg: ProjectConfig, path: str) -> bool:
+def verify(cfg, path: str) -> bool:
     """Run PestBuilder spinup (NaN end-state guard) and the container health check."""
+    from swimrs.calibrate import PestBuilder
+    from swimrs.container import open_container
+    from swimrs.container.health import health_report_output_dir
+
     print("\n=== Spinup ===")
     cal_cfg = _load_config(cfg.config_path, calibrate=True)
     container = open_container(path, mode="r")
