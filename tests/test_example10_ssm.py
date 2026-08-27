@@ -38,3 +38,9 @@ def test_build_ssm_table_subsets_renames_and_sorts():
 def test_build_ssm_table_raises_on_site_with_no_rows():
     with pytest.raises(SystemExit, match="blmmissing"):
         ssm.build_ssm_table(_extractions(), ["blma", "blmmissing"])
+
+
+def test_build_ssm_table_skip_missing_drops_and_reports(capsys):
+    out = ssm.build_ssm_table(_extractions(), ["blma", "blmmissing"], skip_missing=True)
+    assert set(out["site_id"]) == {"blma"}
+    assert "blmmissing" in capsys.readouterr().out
