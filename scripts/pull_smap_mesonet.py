@@ -86,8 +86,20 @@ def local_daily_granules(h5_dir: Path) -> dict:
     return {granule_date(p): p for p in paths}
 
 
-def extract_day(granule, cells: pd.DataFrame, window: tuple[slice, slice]) -> list:
-    """Read the cropped AM window once and pull each station's recommended-quality value."""
+def extract_day(
+    granule,
+    cells: pd.DataFrame,
+    window: tuple[slice, slice],
+    allow_flagged: frozenset = frozenset(),
+) -> list:
+    """Read the cropped AM window once and pull each station's recommended-quality value.
+
+    Stations in ``allow_flagged`` keep non-recommended retrievals too (any present
+    value, fill excluded) — a targeted QC relaxation for cells whose flag has been
+    empirically checked against in-situ data (e.g. blmrubyc, flagged only for
+    mountainous terrain yet scoring r_slow ~0.83 vs its 10 cm sensor). ``qual_flag``
+    is recorded on every row so flagged values stay identifiable downstream.
+    """
     row_sl, col_sl = window
     fobj = granule if isinstance(granule, Path) else earthaccess.open([granule])[0]
     with h5py.File(fobj, "r") as f:
@@ -102,19 +114,36 @@ def extract_day(granule, cells: pd.DataFrame, window: tuple[slice, slice]) -> li
         cells["station"], cells["row"], cells["col"], strict=True
     ):
         r, c = row - row_sl.start, col - col_sl.start
-        if not recommended[r, c]:
+        keep = recommended[r, c] or (station in allow_flagged and sm[r, c] != FILL)
+        if not keep:
             continue
         records.append(
-            {"station": station, "date": date_str, "smap_sm": float(sm[r, c])}
+            {
+                "station": station,
+                "date": date_str,
+                "smap_sm": float(sm[r, c]),
+                "qual_flag": int(qf[r, c]),
+            }
         )
     return records
 
 
-def load_existing(out_path: Path) -> tuple[pd.DataFrame, set]:
+def load_existing(
+    out_path: Path, stations: set | None = None
+) -> tuple[pd.DataFrame, set]:
+    """Existing rows plus the set of already-covered dates.
+
+    With ``stations``, only rows for those stations count toward the done set — so a
+    station-targeted re-run (e.g. recovering a QC-flagged station) revisits dates the
+    full-network pull already wrote for everyone else.
+    """
     if not out_path.exists():
         return pd.DataFrame(columns=["station", "date", "smap_sm"]), set()
     existing = pd.read_parquet(out_path)
-    done = set(pd.to_datetime(existing["date"]).dt.strftime("%Y%m%d"))
+    scope = (
+        existing if stations is None else existing[existing["station"].isin(stations)]
+    )
+    done = set(pd.to_datetime(scope["date"]).dt.strftime("%Y%m%d"))
     return existing, done
 
 
@@ -134,14 +163,28 @@ def write_output(existing: pd.DataFrame, new_records: list, out_path: Path) -> i
     return len(combined)
 
 
-def run(data_dir: Path, start: str, end: str, h5_dir: Path | None = None) -> None:
+def run(
+    data_dir: Path,
+    start: str,
+    end: str,
+    h5_dir: Path | None = None,
+    stations: set | None = None,
+    allow_flagged: frozenset = frozenset(),
+) -> None:
     if h5_dir is None:
         earthaccess.login(strategy="netrc")
 
     cells = station_grid_cells(data_dir / "mesonet/mt_mesonet_stations.csv")
+    if stations is not None:
+        unknown = stations - set(cells["station"])
+        if unknown:
+            raise SystemExit(f"unknown station(s): {sorted(unknown)}")
+        cells = cells[cells["station"].isin(stations)].reset_index(drop=True)
     window = bounding_window(cells)
     row_sl, col_sl = window
     print(f"{len(cells)} Mesonet stations")
+    if allow_flagged:
+        print(f"Keeping non-recommended retrievals for: {sorted(allow_flagged)}")
     print(
         f"Cropped EASE2_G9km window: rows {row_sl.start}:{row_sl.stop}, "
         f"cols {col_sl.start}:{col_sl.stop} "
@@ -149,7 +192,7 @@ def run(data_dir: Path, start: str, end: str, h5_dir: Path | None = None) -> Non
     )
 
     out_path = data_dir / "validation/smap_mesonet_extractions.parquet"
-    existing, done = load_existing(out_path)
+    existing, done = load_existing(out_path, stations=stations)
     if done:
         print(f"Resuming: {len(done)} dates already in {out_path.name}")
 
@@ -179,7 +222,7 @@ def run(data_dir: Path, start: str, end: str, h5_dir: Path | None = None) -> Non
             print(f"  {date_str}: no granule (data gap), skipping")
             continue
         try:
-            new_records.extend(extract_day(granule, cells, window))
+            new_records.extend(extract_day(granule, cells, window, allow_flagged))
             n_done += 1
             consecutive_failures = 0
         except Exception as exc:  # noqa: BLE001 - keep the run going past transient errors
@@ -231,5 +274,26 @@ if __name__ == "__main__":
         help="local granule archive (e.g. /nas/soils/smap/SPL3SMP_E/hdf5); "
         "reads granules from disk instead of streaming via earthaccess",
     )
+    p.add_argument(
+        "--stations",
+        default=None,
+        help="comma-separated station subset to extract (default: all); done-date "
+        "resume is scoped to the subset so a targeted re-run revisits the full range",
+    )
+    p.add_argument(
+        "--allow-flagged",
+        default=None,
+        help="comma-separated stations whose non-recommended retrievals are kept "
+        "(targeted QC relaxation; qual_flag is recorded on every extracted row)",
+    )
     a = p.parse_args(sys.argv[1:])
-    run(a.data_dir, a.start, a.end, h5_dir=a.h5_dir)
+    run(
+        a.data_dir,
+        a.start,
+        a.end,
+        h5_dir=a.h5_dir,
+        stations=set(a.stations.split(",")) if a.stations else None,
+        allow_flagged=frozenset(a.allow_flagged.split(","))
+        if a.allow_flagged
+        else frozenset(),
+    )
