@@ -13,7 +13,7 @@ Must run with the swim-rs venv (needs swimrs, rasterstats, tqdm):
 Outputs under --out-dir (default /data/ssd2/nisar/swim/mt_mesonet/):
     gis/mesonet_fields_100m.shp|.fgb   100 m station buffers (site_id, state)
     gis/mesonet_fields_gfid.shp|.fgb   buffers joined to GFID/LAT/LON/ELEV
-    met/gridmet/{GFID}.parquet         daily tmin/tmax/eto/etr/prcp/srad/u2/ea/elev
+    meteorology/gridmet/{GFID}.parquet daily tmin/tmax/eto/etr/prcp/srad/u2/ea/elev
 
 No correction-factor JSON is produced: eto/etr here are raw gridMET (spinup
 only); the corrected reference ET the model runs on is the OpenET extraction.
@@ -89,7 +89,10 @@ def main():
 
     out_dir = Path(args.out_dir)
     gis_dir = out_dir / "gis"
-    met_dir = out_dir / "met" / "gridmet"
+    # The run configs point met at {data}/meteorology/gridmet — write there so a
+    # network-wide pull appends to the pilot cohort's parquets instead of forking
+    # a second store under met/.
+    met_dir = out_dir / "meteorology" / "gridmet"
     gis_dir.mkdir(parents=True, exist_ok=True)
     met_dir.mkdir(parents=True, exist_ok=True)
 
